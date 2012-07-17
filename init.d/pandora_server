@@ -1,0 +1,148 @@
+#!/bin/bash
+# Copyright (c) 2005-2010 Artica ST
+#
+# Author: Sancho Lerena <slerena@artica.es> 2006-2010
+#
+# /etc/init.d/pandora_server
+#
+# System startup script for Pandora FMS
+#
+# Comments to support chkconfig on RedHat Linux
+# chkconfig: 2345 90 10
+# description: Pandora FMS Server startup scrip
+#
+# Comments to support LSB init script conventions
+### BEGIN INIT INFO
+# Provides:       pandora_server
+# Required-Start: $syslog cron
+# Should-Start:   $network cron mysql
+# Required-Stop:  $syslog 
+# Should-Stop:    $network 
+# Default-Start:  2 3 5
+# Default-Stop:   0 1 6
+# Short-Description: Pandora FMS Server startup script
+# Description:    Pandora FMS Server startup script
+### END INIT INFO
+
+# If you want to run several pandora servers in this machine, just copy 
+# this script to another name, editing PANDORA_HOME to the new .conf 
+
+export PANDORA_HOME="/etc/pandora/pandora_server.conf"
+export PANDORA_DAEMON=/usr/bin/pandora_server
+
+# Uses a wait limit before sending a KILL signal, before trying to stop
+# Pandora FMS server nicely. Some big systems need some time before close
+# all pending tasks / threads.
+
+export MAXWAIT=60
+
+# Check for SUSE status scripts
+if [ -f /etc/rc.status ]
+then
+	. /etc/rc.status
+	rc_reset
+else
+	# Define rc functions for non-suse systems, "void" functions.
+	function rc_status () { VOID=1; }
+	function rc_exit () { exit; }
+	function rc_failed () { VOID=1; }
+
+fi
+	
+# This function replace pidof, not working in the same way in different linux distros
+
+function pidof_pandora () (
+	# This sets COLUMNS to XXX chars, because if command is run 
+	# in a "strech" term, ps aux don't report more than COLUMNS
+	# characters and this will not work. 
+	COLUMNS=300
+	PANDORA_PID=`ps aux | grep "$PANDORA_DAEMON $PANDORA_HOME" | grep -v grep | tail -1 | awk '{ print $2 }'`
+	echo $PANDORA_PID
+)
+
+# Main script
+
+if [ ! -f $PANDORA_DAEMON ]
+then
+	echo "Pandora FMS Server not found, please check setup and read manual"
+	rc_status -s
+	rc_exit
+fi
+
+case "$1" in
+	start)
+		PANDORA_PID=`pidof_pandora`
+		if [ ! -z "$PANDORA_PID" ]
+		then
+			echo "Pandora FMS Server is currently running on this machine with PID ($PANDORA_PID). Aborting now..."
+			rc_failed 1
+			rc_exit 
+		fi
+	
+		$PANDORA_DAEMON $PANDORA_HOME -D
+		sleep 1
+
+		PANDORA_PID=`pidof_pandora`
+		
+		if [ ! -z "$PANDORA_PID" ]
+		then
+			echo "Pandora Server is now running with PID $PANDORA_PID"
+			rc_status -v
+		else
+			echo "Cannot start Pandora FMS Server. Aborted."
+			echo "Check Pandora FMS log files at '/var/log/pandora/pandora_server.error & pandora_server.log'"
+			rc_status -s
+		fi
+	;;
+		
+	stop)
+		PANDORA_PID=`pidof_pandora`
+		if [ -z "$PANDORA_PID" ]
+		then
+			echo "Pandora FMS Server is not running, cannot stop it."
+			rc_failed 
+		else
+			echo "Stopping Pandora FMS Server"
+			kill $PANDORA_PID > /dev/null 2>&1
+			COUNTER=0
+
+		while [ $COUNTER -lt $MAXWAIT ]
+	 		do
+ 				PANDORA_PID=`pidof_pandora`
+				if [ -z "$PANDORA_PID" ]
+ 				then
+					COUNTER=$MAXWAIT
+				fi
+				COUNTER=`expr $COUNTER + 1`
+				sleep 1
+			done
+		
+			# Send a KILL -9 signal to process, if it's alive after 60secs, we need
+			# to be sure is really dead, and not pretending...
+			if [ ! -z "$PANDORA_PID" ]
+			then
+				kill -9 $PANDORA_PID   > /dev/null 2>&1
+			fi
+			rc_status -v
+		fi
+	;;
+	status)
+		PANDORA_PID=`pidof_pandora`
+		if [ -z "$PANDORA_PID" ]
+		then
+			echo "Pandora FMS Server is not running."
+			rc_status 
+		else
+			echo "Pandora FMS Server is running with PID $PANDORA_PID."
+			rc_status
+		fi
+	;;
+	force-reload|restart)
+		$0 stop
+		$0 start
+		;;
+	*)
+		echo "Usage: pandora_server { start | stop | restart | status }"
+		exit 1
+esac
+rc_exit

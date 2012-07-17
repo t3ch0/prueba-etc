@@ -1,0 +1,2 @@
+#!/bin/bash
+perl /usr/share/pandora_server/util/pandora_db.pl /etc/pandora/pandora_server.conf
